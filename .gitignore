@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Streamlit secrets
+.streamlit/secrets.toml
+
+# Dataset files
+data/*.csv
+data/*.zip
+data/*.pcap
+
+# Trained models and generated outputs
+models/
+outputs/
+
+# System and editor files
+.DS_Store
+Thumbs.db
+.vscode/
