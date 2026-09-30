@@ -18,9 +18,6 @@ data/*.csv
 data/*.zip
 data/*.pcap
 
-# Trained models and generated outputs
-models/
-outputs/
 
 # System and editor files
 .DS_Store
