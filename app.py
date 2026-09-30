@@ -149,6 +149,21 @@ def main():
     st.set_page_config(page_title='Network Traffic Anomaly Detective', page_icon='🛡️', layout='wide')
     st.title('🛡️ Network Traffic Anomaly Detective')
     st.write('Analyze recorded connections and build a queue of possible warnings for review.')
+    with st.expander("How it works"):
+        st.markdown("""
+        Choose **Try demo** or upload your recorded network traffic.
+
+        - 🔴 **Needs review:** the model flagged the connection.
+        - 🟢 **No warning:** the model did not flag it.
+        - 🟠 **False alarm:** flagged, but the known label says normal.
+        - 🟣 **Missed attack:** not flagged, but the known label says malicious.
+
+        Orange and purple require known labels.
+
+        **Model score** determines whether a connection is flagged.
+        **Observed traffic** describes patterns in the log, such as
+        missing replies; it does not explain the model’s exact reasoning.
+        """)
     st.info('Warnings need human review. A flagged connection is not a confirmed attack; an unflagged connection is not guaranteed safe.')
     mode = st.radio('Get started', ['Try demo', 'Upload my data'], horizontal=True)
     demo_mode = mode == 'Try demo'
@@ -237,7 +252,7 @@ def main():
     cols[3].metric("🟠 False alarms", f"{np.count_nonzero(statuses == 'False alarm'):,}" if actual is not None else "Unknown")
     counts = [{"status": status, "connections": int(np.count_nonzero(statuses == status))}
               for status in STATUS_COLORS if actual is not None or status in ["Needs review", "No warning"]]
-    st.vega_lite_chart({"values": counts}, {
+    st.vega_lite_chart(pd.DataFrame(counts), {
         "mark": {"type": "bar", "cornerRadiusEnd": 5},
         "encoding": {
             "x": {"field": "status", "type": "nominal", "sort": list(STATUS_COLORS), "axis": {"title": None, "labelAngle": 0}},
@@ -274,16 +289,52 @@ def main():
     first = ["status", "model_score", "traffic_observations", "warning_basis", "review_priority"]
     display = table[first + [column for column in table if column not in first]]
     st.caption(f"Showing {min(100, len(display)):,} of {len(display):,} connections in this view.")
-    st.dataframe(display.head(100).style.apply(color_connection, axis=1), use_container_width=True)
+    st.dataframe(
+    display.head(100).style.apply(color_connection, axis=1),
+    use_container_width=True,
+    column_config={
+        "status": "Connection status",
+        "model_score": "Model score",
+        "traffic_observations": "Observed traffic",
+        "warning_basis": "Why the model flagged it",
+        "review_priority": "Review priority",
+        "ts": "Timestamp",
+        "id.orig_h": "Source device",
+        "id.orig_p": "Source port",
+        "id.resp_h": "Destination address",
+        "id.resp_p": "Destination port",
+        "proto": "Protocol",
+        "service": "Service",
+        "duration": "Duration (seconds)",
+        "orig_pkts": "Packets sent",
+        "resp_pkts": "Packets received",
+        "orig_bytes": "Bytes sent",
+        "resp_bytes": "Bytes received",
+        "conn_state": "Connection state",
+        "same_destination_connections_2min": "Connections to same destination in 2 min",
+    },
+)
+    
     st.download_button("Download this view", display.to_csv(index=False).encode("utf-8"), "connection_review.csv", "text/csv")
     if not table.empty:
         with st.expander("Inspect one connection", expanded=True):
             positions = list(range(min(100, len(table))))
             chosen = st.selectbox("Connection", positions, format_func=lambda pos: f"Row {table.index[pos]} · {table.iloc[pos]['status']} · score {table.iloc[pos]['model_score']:.3f}")
             row = table.iloc[chosen]
-            st.write(f"**{row['status']}**")
-            st.write(row["warning_basis"])
-            st.write("**Observed traffic:** " + row["traffic_observations"])
+            message = (
+                f"**{row['status']}**\n\n"
+                f"{row['warning_basis']}\n\n"
+                f"**Observed traffic:** {row['traffic_observations']}"
+            )
+
+            if row["status"] == "Needs review":
+                st.error(message)
+            elif row["status"] == "No warning":
+                st.success(message)
+            elif row["status"] == "False alarm":
+                st.warning(message)
+            else:
+                st.info(message)
             if row["status"] == "False alarm":
                 st.write("The known dataset label is normal, despite the model warning.")
             elif row["status"] == "Missed attack":
@@ -292,15 +343,41 @@ def main():
     actual = known_answers(connections, source)
     if actual is not None:
         tn, fp, fn, tp = confusion_matrix(actual, flagged.astype(int), labels=[0, 1]).ravel()
-        with st.expander('Model evaluation — labeled data only'):
-            st.write(f'Malicious connections caught: **{tp:,}**')
-            st.write(f'Malicious connections missed: **{fn:,}**')
-            st.write(f'False alarms: **{fp:,}**')
-            st.write(f'Normal connections left alone: **{tn:,}**')
-            if tn + fp:
-                st.write(f'False-alarm rate: **{100 * fp / (tn + fp):.3f}%**')
-            if tp + fn:
-                st.write(f'Attack recall: **{100 * tp / (tp + fn):.2f}%**')
+        with st.expander("Model evaluation — labeled data only"):
+            left, right = st.columns(2)
+
+            with left:
+                with st.container(border=True):
+                    st.metric("🔴 Malicious connections caught", f"{tp:,}")
+                with st.container(border=True):
+                    st.metric("🟠 False alarms", f"{fp:,}")
+
+            with right:
+                with st.container(border=True):
+                    st.metric("🟣 Malicious connections missed", f"{fn:,}")
+                with st.container(border=True):
+                    st.metric("🟢 Normal connections left alone", f"{tn:,}")
+
+            rate, recall = st.columns(2)
+
+            with rate:
+                with st.container(border=True):
+                    st.metric(
+                        "False-alarm rate",
+                        f"{100 * fp / (tn + fp):.3f}%"
+                        if tn + fp else "N/A",
+                    )
+
+            with recall:
+                with st.container(border=True):
+                    st.metric(
+                        "Attack recall",
+                        f"{100 * tp / (tp + fn):.2f}%"
+                        if tp + fn else "N/A",
+                    )
+
+
+        
     elif 'label' in connections.columns:
         st.caption('Evaluation skipped: labels are missing or contain unsupported values. Predictions still use connection clues only.')
     protocol_summary = results.groupby('proto')['needs_review'].agg(connections='size', warnings='sum')
